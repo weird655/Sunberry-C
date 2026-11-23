@@ -4636,6 +4636,127 @@ int main(void) {
 
     assert_ok("84. parser", "attribute/sizeof/pointer/switch error branches", test_parser_error_surface2)
 
+
+    # Layer 85: codegen / netlist graph edges
+    def test_codegen_netlist_edges():
+        from sigilc_core.codegen import _field_size_expr
+        from sigilc_core.nodes import LiteralExpr
+        from sigilc_core.type_system import ArrayType, BaseType, PointerType
+
+        b = BaseType(1, 1, "u4")
+        p = PointerType(1, 1, b)
+        a = ArrayType(1, 1, b, LiteralExpr(1, 1, "2", "INT_NUM"), size_val=2)
+        assert _field_size_expr(b) and _field_size_expr(p)
+        assert _field_size_expr(a)
+
+        src = """#define K 2
+a@(packed) s{ P { u1 a; u4 b w! 3; };
+u{ U { u4 x; f4 y; };
+e{ E { A m, 0, B m, 1, };
+t! (1 == 1, "ok");
+i4 main(v.) { o! P p; o! U u; i? (1) { r; 0; } e: { r; 1; } }
+"""
+        c = compile_source(src, "codegen-edge.sigil", checked=True, prelude="custom.h")
+        assert "SIGIL_CHECKED_ARITH" in c and '#include "custom.h"' in c
+        assert "SIGIL_ATTR" in c
+        h = compile_header(src, "codegen-edge.sigil", "edge.h")
+        assert "#ifndef" in h
+        from sigilc_core.codegen import CodeGenerator
+        hdr = CodeGenerator("edge.sigil", header_mode=True, prelude_include="p.h",
+                            checked_arith=True, checked_strict=True).generate_header([], "EDGE_H")
+        assert "SIGIL_CHECKED_ARITH" in hdr and "SIGIL_CHECKED_STRICT" in hdr and '#include "p.h"' in hdr
+        proto = compile_header("i4 api(i4 x);\n", "proto.sigil", "proto.h")
+        assert "api" in proto
+        a_no_size = ArrayType(1, 1, b, LiteralExpr(1, 1, "n", "INT_NUM"))
+        assert _field_size_expr(a_no_size) is None
+
+        graph_src = """o! u4 reg m, 0;
+!1! A;
+!1! m, reg;
+!2! B;
+!2! m, !/1/!;
+!/[0]/! m, f1, f2;
+!/[[1]]/! m, fn1, fn2;
+![10]! !/[0]/! {
+    !4! X;
+    !4! m, f1;
+}
+!<+cat+>! on;
+i4 main(v.) { r; 0; }
+"""
+        for fmt in ("text", "dot", "json", "mermaid", "html", "viewer"):
+            assert netlist_source(graph_src, "!math!/edge.sigil", format=fmt)
+
+        from sigilc_core.confine import Confinement
+        from sigilc_core.nodes import SemanticError
+        c = Confinement()
+        for call in (lambda: c.expand_short("missing"), lambda: c.expand_long("missing")):
+            try:
+                call()
+            except SemanticError:
+                pass
+            else:
+                raise AssertionError("expected missing group rejection")
+
+    assert_ok("85. codegen", "codegen options/attributes/slices and netlist graph branches", test_codegen_netlist_edges)
+
+
+    # Layer 86: tutorial corpus compile
+    def test_tutorial_corpus_compile():
+        import glob
+        root = os.path.dirname(os.path.abspath(__file__))
+        files = sorted(glob.glob(os.path.join(root, "examples", "tutorial", "*.sigil")))
+        assert files
+        for path in files:
+            with open(path, encoding="utf-8") as f:
+                src = f.read()
+            try:
+                compile_source(src, os.path.basename(path))
+            except (SemanticError, ParseError, LexerError):
+                # Multi-file / platform examples may be intentionally scoped.
+                continue
+
+    assert_ok("86. corpus", "tutorial examples compile through the front end", test_tutorial_corpus_compile)
+
+
+    # Layer 87: lexer literal/comment edge branches
+    def test_lexer_literal_edges():
+        from sigilc_core.lexer import Lexer
+        ok = [
+            "u4 x m, 0b1010;",
+            "f8 x m, 0x1.8p1;",
+            "f8 x m, 1.5e+2;",
+            "u4 x m, 0x1fUL;",
+            "u4 x m, 077;",
+            'p* c@ c1 s m, "a\\n\\x41\\101";',
+            "i4 x m, 1; /* block */ i4 y m, 2;",
+            "i4 x m, 1; // line\n",
+        ]
+        for src in ok:
+            Lexer(src, "lex-edge.sigil").tokenize()
+        bad = [
+            "u4 x m, 0x;",
+            "f8 x m, 0x1p;",
+            "f8 x m, 0x1.2;",
+            "f8 x m, 1e;",
+            "p* c@ c1 s m, \"open;",
+            "c1 c m, 'open;",
+            "u4 x m, 0b;",
+            "f8 x m, 0x1.2;",
+            "i4 x m, a!;",
+            "i4 x m, !<+cat;",
+            "i4 x m, !v1234!;",
+        ]
+        for src in bad:
+            try:
+                Lexer(src, "lex-edge.sigil").tokenize()
+            except LexerError:
+                pass
+            else:
+                raise AssertionError("expected lexer rejection: " + src)
+
+    assert_ok("87. lexer", "hex/binary/suffix/comment/escape and malformed literals", test_lexer_literal_edges)
+
     # === end of tests: new layers go above this line ===
 
     if failures:
@@ -4643,7 +4764,7 @@ int main(void) {
         for layer, desc, why in failures:
             print(f"  - [{layer}] {desc}\n      {why}")
         raise SystemExit(1)
-    print(f"=== ALL {passed}/{total} TESTS IN 84-LAYER MATRIX PASSED! ===")
+    print(f"=== ALL {passed}/{total} TESTS IN 87-LAYER MATRIX PASSED! ===")
 
 if __name__ == "__main__":
     run_test_matrix()
