@@ -11,6 +11,7 @@ import tempfile
 from sigilc import (
     Lexer,
     LexerError,
+    MultiError,
     ParseError,
     Parser,
     SemanticError,
@@ -22,7 +23,6 @@ from sigilc import (
     project_netlist_source,
 )
 from sigilc_core.api import _lsp_diagnostics
-from sigilc_core.nodes import MultiError
 
 
 def run_test_matrix():

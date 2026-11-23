@@ -5,7 +5,7 @@
 > 概括：把数据流写在字面上的 C。
 > 太阳莓果设计。
 
-[![ci](https://github.com/weird655/Sigil-C/actions/workflows/ci.yml/badge.svg)](https://github.com/weird655/Sigil-C/actions/workflows/ci.yml)
+[![ci](https://github.com/weird655/Sunberry-C/actions/workflows/ci.yml/badge.svg)](https://github.com/weird655/Sunberry-C/actions/workflows/ci.yml)
 [![tests](https://img.shields.io/badge/tests-251%20%2F%2079%20layers-brightgreen)](test_matrix.py)
 [![output](https://img.shields.io/badge/output-ISO%20C99-blue)](#)
 [![license](https://img.shields.io/badge/license-CC%20BY%204.0-lightgrey)](LICENSE)
@@ -78,7 +78,7 @@ python3 dist/sigilc.pyz --version
 | Core v1 | 冻结；v1.x 只加不改，破坏性变更先弃用 |
 | libc | 常用 C99 面已覆盖，见 [`STDLIB.md`](STDLIB.md) |
 | Layer 2 `!` | 允许使用，实验性；不纳入 Core v1 冻结 |
-| 支持范围 | 缺陷修复、文档、C99 完备性、函数级多文件；不加新语言记号 |
+| 支持范围 | 缺陷修复、文档、C99 完备性、函数级多文件；新语言记号仅作为可审计的实验扩展 |
 | 命名预算 | 16 个命名空间；每空间 64 个包（0–63）；每空间 64 个函数包导出 |
 | 不做 | GC、借用检查、包管理、运行时、安全认证、跨文件分析 |
 | 退出路径 | 生成的 C99 + `#line` 可独立编译、交付、修改 |
@@ -612,6 +612,9 @@ int main(void) {
 | 74 | ASan/TSan 构建门禁 |
 | 75 | `--checked-external` 外部 C 白名单 |
 | 76 | LSP 未使用局部变量警告 |
+| 77 | vN 硬电阻：容量/溢出/只读/飞线读 |
+| 78 | TNX 预备包：10×16 双缓冲优先级队列 |
+| 79 | 边界：深嵌套、空文件、二进制垃圾、行号、多错误诊断 |
 
 ## 测试与 CI
 
@@ -635,7 +638,7 @@ python tools/bench.py --runs 20 --max-ms 500  # 转译耗时基线
 
 CI 在 `ubuntu-latest` 上用 Python 3.10 / 3.12 跑完整矩阵；另有一个 `windows-latest` job 做 `py_compile`、`--check examples`、转译 VM 示例，并在有 gcc 时编译运行：
 
-[`ci.yml`](.github/workflows/ci.yml) · [最近一次运行](https://github.com/weird655/Sigil-C/actions/workflows/ci.yml)
+[`ci.yml`](.github/workflows/ci.yml) · [最近一次运行](https://github.com/weird655/Sunberry-C/actions/workflows/ci.yml)
 
 ---
 
@@ -661,7 +664,7 @@ CI 在 `ubuntu-latest` 上用 Python 3.10 / 3.12 跑完整矩阵；另有一个 
 
 ## 状态
 
-- **维护模式**：不再新增语言记号；修复缺陷、补文档、少量 C99 完备性补充（如 libc 原型、跨函数来源摘要）仍会接受。
+- **维护模式**：不再随意新增语言记号；新增必须作为可审计、可关闭的实验扩展进入；修复缺陷、补文档、少量 C99 完备性补充仍会接受。
 - 又称 **Sunberry-C**；版本 **1.30.0**，tag `v1.30.0` + [GitHub Release](https://github.com/weird655/Sunberry-C/releases/tag/v1.30.0) 已发布；Core v1 语法冻结（v1.x 只加不改）。
 - 251 项测试 / 79 层，Windows、WSL Ubuntu、GitHub Actions 通过；ruff / mypy 零告警，覆盖率门槛 85%。
 - Core v1：45 个印记 + C 运算符、指针来源、跨函数逃逸、`r@` 校验、外部类型 `x!`、头文件输出、LSP、格式化器、多文件构建、栈/堆三写法。
