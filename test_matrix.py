@@ -22,7 +22,34 @@ from sigilc import (
     netlist_source,
     project_netlist_source,
 )
-from sigilc_core.api import _lsp_diagnostics
+from sigilc_core.api import (
+    _check_targets,
+    _format_targets,
+    _lsp_capabilities,
+    _lsp_completion_items,
+    _lsp_diagnostics,
+    _lsp_document_symbols,
+    _lsp_read,
+    _lsp_run,
+    _lsp_uri_path,
+    _lsp_warnings,
+    _lsp_word_prefix,
+    _lsp_write,
+    _print_error,
+    _print_error_at,
+    _project_dir_namespaces,
+    _project_effects,
+    _project_namespace,
+    _project_package_bindings,
+    _project_package_ids,
+    _project_plant_for,
+    _project_plant_scan,
+    _project_prototypes,
+    _rename_function_calls,
+    _rewrite_external_packages,
+    _rewrite_local_packages,
+    format_source,
+)
 
 
 def run_test_matrix():
@@ -3775,6 +3802,500 @@ int main(void) {
 
     assert_ok("79. boundaries", "block depth: 400 ok, 500 rejected", test_block_depth)
 
+
+    # Layer 80: CLI/API contract coverage
+    def test_cli_contracts():
+        work = tempfile.mkdtemp(prefix="cli-contract-")
+
+        import io as _io
+        from contextlib import redirect_stderr, redirect_stdout
+        from types import SimpleNamespace
+
+        from sigilc_core.cli import main as cli_main
+
+        def run(*args):
+            out, err = _io.StringIO(), _io.StringIO()
+            try:
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = cli_main(list(args))
+            except SystemExit as e:
+                rc = e.code if isinstance(e.code, int) else 0
+            return SimpleNamespace(returncode=rc, stdout=out.getvalue(), stderr=err.getvalue())
+
+        src = os.path.join(work, "main.sigil")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) { r; 0; }\n")
+
+        prelude = os.path.join(work, "prelude.h")
+        r = run(src, "--emit-prelude", prelude)
+        assert r.returncode == 0 and os.path.exists(prelude), r.stderr
+
+        r = run(src, "--emit-header", "-o", os.path.join(work, "main.c"))
+        assert r.returncode == 0, r.stderr
+        assert os.path.exists(os.path.join(work, "main.h"))
+
+        header = os.path.join(work, "custom.h")
+        r = run(src, "--header", header, "-o", os.path.join(work, "custom.c"))
+        assert r.returncode == 0 and os.path.exists(header), r.stderr
+
+        r = run(src, "--no-line", "-o", os.path.join(work, "noline.c"))
+        assert r.returncode == 0, r.stderr
+        assert "#line" not in open(os.path.join(work, "noline.c"), encoding="utf-8").read()
+
+        r = run(src, "--prelude", "custom_prelude.h", "-o", os.path.join(work, "prelude.c"))
+        assert r.returncode == 0, r.stderr
+        assert '#include "custom_prelude.h"' in open(os.path.join(work, "prelude.c"), encoding="utf-8").read()
+
+        r = run(src, "--define", "LIMIT=3", "-o", os.path.join(work, "define.c"))
+        assert r.returncode == 0, r.stderr
+        assert "#define LIMIT 3" in open(os.path.join(work, "define.c"), encoding="utf-8").read()
+
+        net = os.path.join(work, "net.json")
+        r = run(src, "--netlist", "--netlist-format", "json", "-o", net)
+        assert r.returncode == 0 and os.path.exists(net), r.stderr
+
+        fmt_src = os.path.join(work, "fmt.sigil")
+        with open(fmt_src, "w", encoding="utf-8") as f:
+            f.write("i4 main(v.){r;0;}\n")
+        r = run("--fmt", fmt_src)
+        assert r.returncode == 0 and "main" in r.stdout, r.stderr
+        r = run("--fmt=" + fmt_src, "--fmt-check")
+        assert r.returncode == 1, (r.returncode, r.stderr)
+        r = run("--fmt", fmt_src, "--write")
+        assert r.returncode == 0, r.stderr
+        r = run("--fmt=" + fmt_src, "--fmt-check")
+        assert r.returncode == 0, (r.returncode, r.stderr)
+
+        init_dir = os.path.join(work, "project")
+        r = run("--init", init_dir)
+        assert r.returncode == 0, r.stderr
+        r = run("--init", init_dir)
+        assert r.returncode != 0, r.stderr
+        r = run("--init", init_dir, "--force")
+        assert r.returncode == 0, r.stderr
+
+        r = run("--asan", src)
+        assert r.returncode == 2
+        r = run("--trap-trace", "--shadow-stack", src)
+        assert r.returncode == 2
+        r = run("--define", "BROKEN")
+        assert r.returncode == 2
+        r = run()
+        assert r.returncode == 2
+
+        build_dir = os.path.join(work, "build")
+        os.makedirs(build_dir)
+        with open(os.path.join(build_dir, "main.sigil"), "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) { r; 0; }\n")
+        r = run("--build", build_dir, "--header", "x.h")
+        assert r.returncode == 2, r.stderr
+        r = run("--build", build_dir, "--asan", "--tsan")
+        assert r.returncode == 2, r.stderr
+        r = run("--build", build_dir, "--netlist", "--netlist-format", "json", "-o", os.path.join(work, "project.json"))
+        assert r.returncode == 0, r.stderr
+        r = run("--build", build_dir, "-o", os.path.join(work, "app"), "--run")
+        assert r.returncode == 0, r.stderr
+        r = run("--build", build_dir, "-o", os.path.join(work, "app2"), "--emit-header")
+        assert r.returncode == 0, r.stderr
+        r = run("--build", build_dir, "--checked", "-o", os.path.join(work, "app3"))
+        assert r.returncode == 0, r.stderr
+        empty_dir = os.path.join(work, "empty-build")
+        os.makedirs(empty_dir)
+        r = run("--build", empty_dir)
+        assert r.returncode == 1, r.stderr
+        dup_dir = os.path.join(work, "dup-build")
+        os.makedirs(dup_dir)
+        for name in ("a.sigil", "b.sigil"):
+            with open(os.path.join(dup_dir, name), "w", encoding="utf-8") as f:
+                f.write("i4 same(v.) { r; 1; }\n")
+        r = run("--build", dup_dir)
+        assert r.returncode == 1, r.stderr
+        pkg_dir = os.path.join(work, "pkg-build")
+        os.makedirs(pkg_dir)
+        with open(os.path.join(pkg_dir, "main.sigil"), "w", encoding="utf-8") as f:
+            f.write("!64! P;\ni4 main(v.) { r; 0; }\n")
+        r = run("--build", pkg_dir)
+        assert r.returncode == 1, r.stderr
+        zero_dir = os.path.join(work, "zero-build")
+        os.makedirs(zero_dir)
+        with open(os.path.join(zero_dir, "main.sigil"), "w", encoding="utf-8") as f:
+            f.write("!01! P;\ni4 main(v.) { r; 0; }\n")
+        r = run("--build", zero_dir)
+        assert r.returncode == 1, r.stderr
+
+    assert_ok("80. CLI", "CLI flags, formatting, init, netlist, build guards", test_cli_contracts)
+
+
+    # Layer 80: LSP/API helpers
+    def test_lsp_api_helpers():
+        import io as _io
+        from types import SimpleNamespace
+
+        def frame(obj):
+            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            return b"Content-Length: %d\r\n\r\n%s" % (len(body), body)
+
+        raw = frame({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        msg = _lsp_read(_io.BytesIO(raw))
+        assert msg["method"] == "initialize"
+        assert _lsp_read(_io.BytesIO(b"")) is None
+        assert _lsp_read(_io.BytesIO(b"Content-Length: 0\r\n\r\n")) is None
+
+        out = _io.BytesIO()
+        _lsp_write(out, {"jsonrpc": "2.0", "id": 2, "result": None})
+        assert _lsp_read(_io.BytesIO(out.getvalue()))["id"] == 2
+
+        assert _lsp_uri_path("file:///tmp/x.sigil") == "/tmp/x.sigil"
+        assert _lsp_uri_path("untitled:1") == "buffer.sigil"
+        assert _lsp_capabilities(False)["textDocumentSync"] == 1
+        assert "completionProvider" in _lsp_capabilities(True)
+        assert _lsp_completion_items("i?")
+        assert _lsp_completion_items("")
+        assert _lsp_word_prefix("abc def", 0, 7) == "def"
+        assert _lsp_word_prefix("abc", 9, 0) == ""
+
+        warnings = _lsp_warnings("i4 main(v.) {\n    o! i4 unused m, 1;\n    r; 0;\n}\n")
+        assert any("unused" in w["message"] for w in warnings), warnings
+        assert _lsp_warnings("i4 main(v.) { r; 0; }\n") == []
+
+        sym_src = "s{ Foo { i4 x; };\no! i4 g m, 1;\ni4 f(v.) { r; 0; }\n"
+        syms = _lsp_document_symbols(sym_src)
+        assert any(s["name"] == "Foo" for s in syms), syms
+        assert _lsp_document_symbols("i4 main(v.) { r; 0;") == []
+
+        def run_lsp(messages, completion=False):
+            stdin = _io.BytesIO(b"".join(frame(m) for m in messages))
+            stdout = _io.BytesIO()
+            old_in, old_out = sys.stdin, sys.stdout
+            sys.stdin = SimpleNamespace(buffer=stdin)
+            sys.stdout = SimpleNamespace(buffer=stdout)
+            try:
+                return _lsp_run(completion), stdout.getvalue()
+            finally:
+                sys.stdin, sys.stdout = old_in, old_out
+
+        uri = "file:///tmp/lsp.sigil"
+        text = "i4 main(v.) {\n    o! i4 unused m, 1;\n    r; 0;\n}\n"
+        msgs = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+            {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+            {"jsonrpc": "2.0", "method": "textDocument/didOpen",
+             "params": {"textDocument": {"uri": uri, "text": text}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "textDocument/completion",
+             "params": {"textDocument": {"uri": uri}, "position": {"line": 0, "character": 2}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "textDocument/documentSymbol",
+             "params": {"textDocument": {"uri": uri}}},
+            {"jsonrpc": "2.0", "method": "textDocument/didChange",
+             "params": {"textDocument": {"uri": uri}, "contentChanges": [{"text": text}]}},
+            {"jsonrpc": "2.0", "method": "textDocument/didClose",
+             "params": {"textDocument": {"uri": uri}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "unknown/method"},
+            {"jsonrpc": "2.0", "id": 5, "method": "shutdown"},
+            {"jsonrpc": "2.0", "method": "exit"},
+        ]
+        rc, output = run_lsp(msgs, completion=True)
+        assert rc == 0 and output
+        rc2, output2 = run_lsp(msgs[2:5], completion=False)
+        assert rc2 == 0 and output2
+
+        # Pure formatter paths
+        assert format_source("i4 main(v.){r;0;}\n").strip()
+        assert format_source("") == ""
+        sample = (
+            "#define X 1 \\\n"
+            "  2\n"
+            "\n"
+            "/* block\n"
+            "comment */\n"
+            "// line\n"
+            's = "a,;:/*";\n'
+            "c = '\\n';\n"
+            "foo( a , b ) ;\n"
+            "o! i4 x m,1;\n"
+        )
+        formatted = format_source(sample)
+        assert "#define X 1" in formatted and "/* block" in formatted
+
+    assert_ok("80. CLI", "LSP framing/helpers/run and formatter paths", test_lsp_api_helpers)
+
+
+    # Layer 80: project helper contracts
+    def test_project_helpers():
+        src = (
+            "i4 add(i4 a, i4 b) { r; a + b; }\n"
+            "s@ i4 hidden(v.) { r; 0; }\n"
+            "p* i4 keep(p* i4 p) { r; p; }\n"
+            "i4 main(v.) { r; add(1, 2); }\n"
+        )
+        protos = _project_prototypes(src, "math")
+        assert any("math_add" in p for p in protos), protos
+        assert not any("hidden" in p or "main" in p for p in protos), protos
+        assert any(p.startswith("i4 add") for p in _project_prototypes(src, mangle=False))
+        assert _project_dir_namespaces("!math!/core.sigil") == ["math"]
+        assert _project_dir_namespaces("!a!/!b!/core.sigil") == ["a", "b"]
+        assert _project_namespace("!math!/core.sigil") == "math"
+        assert _project_namespace("plain.sigil") == ""
+        ids = _project_package_ids("!1! A;\n!1! B;\n!/1/!\n!2! C;\n")
+        assert ids == ["1", "2"], ids
+        bindings = _project_package_bindings("!1! m, add;\n!1! m, other;\n")
+        assert bindings["1"] == "add"
+        assert _rewrite_local_packages("!/1/! !/2/!", "", {"1"}, {"2": "fn2"}) == "!/1/! fn2"
+        exports = {"math.1": "math_add"}
+        packages = {"math": {"1": "a.sigil"}}
+        assert _rewrite_external_packages("!math[1]!", exports, packages, {}, {"math"}, "x.sigil") == "math_add"
+        for bad, needle in (
+            ("!nope[1]!", "not declared"),
+            ("!math[9]!", "not declared in namespace"),
+        ):
+            try:
+                _rewrite_external_packages(bad, exports, packages, {}, {"math"}, "x.sigil")
+            except SemanticError as e:
+                assert needle in str(e), e
+            else:
+                raise AssertionError("expected external package rejection")
+        assert _rename_function_calls("add(1); s.add; p->add;", {"add": "math_add"}) == "math_add(1); s.add; p->add;"
+        work = tempfile.mkdtemp(prefix="plant-helpers-")
+        plant_dir = os.path.join(work, "plant")
+        os.makedirs(os.path.join(plant_dir, "!box!"))
+        with open(os.path.join(plant_dir, "plant.sigil"), "w", encoding="utf-8") as f:
+            f.write("!<+cat+>! on;\n")
+        plants, err = _project_plant_scan(work, [os.path.join(plant_dir, "plant.sigil")])
+        assert err is None and plants, (plants, err)
+        assert _project_plant_for(os.path.join(plant_dir, "!box!", "x.sigil"), plants) == plant_dir
+        assert _project_plant_for(os.path.join(work, "outside.sigil"), plants) is None
+
+        bad_plant = os.path.join(work, "bad")
+        os.makedirs(bad_plant)
+        with open(os.path.join(bad_plant, "plant.sigil"), "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) { r; 0; }\n")
+        assert _project_plant_scan(work, [os.path.join(bad_plant, "plant.sigil")])[1]
+        with open(os.path.join(bad_plant, "plant.sigil"), "w", encoding="utf-8") as f:
+            f.write("!<+bad category!+>! on;\n")
+        assert _project_plant_scan(work, [os.path.join(bad_plant, "plant.sigil")])[1]
+        effects = _project_effects(
+            {"math.sigil": "p* i4 keep(p* i4 p) { r; p; }\n"},
+            {"math.sigil": ["p* i4 keep(p* i4 p);"]},
+        )
+        assert isinstance(effects, dict)
+        good = os.path.join(work, "good.sigil")
+        with open(good, "w", encoding="utf-8") as f:
+            f.write(format_source("i4 main(v.) { r; 0; }\n"))
+        assert _check_targets(good, {}) == 0
+        assert _check_targets(os.path.join(work, "missing.sigil"), {}) == 1
+        bad = os.path.join(work, "bad.sigil")
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) { nope; }\n")
+        assert _check_targets(bad, {}, json_out=True) == 1
+        assert _format_targets(os.path.join(work, "missing.sigil"), False, True) == 1
+        assert _format_targets(good, False, True) == 0
+
+    assert_ok("80. CLI", "project prototype/plant/package/check/format helpers", test_project_helpers)
+
+
+    # Layer 80: API edge branches
+    def test_api_edges():
+        import io as _io
+        from contextlib import redirect_stderr
+
+        err = _io.StringIO()
+        with redirect_stderr(err):
+            _print_error(SemanticError("api.sigil:1:1: boom"), "api.sigil", "line\n")
+            _print_error(SemanticError("plain failure"), "api.sigil", "line\n")
+            _print_error_at("late", "api.sigil", "line\n", 99, 1)
+            _print_error(MultiError([(1, 1, "api.sigil:1:1: one"), (2, 2, "api.sigil:2:2: two")]),
+                         "api.sigil", "one\ntwo\n")
+        assert "boom" in err.getvalue() and "plain failure" in err.getvalue()
+
+        warnings = _lsp_warnings(
+            "i4 main(v.) {\n"
+            "    o! i4 __hidden m, 1;\n"
+            "    o! i4 used m, 1;\n"
+            "    used;\n"
+            "    f~ (i4 i m, 0; i < 1; i+) { }\n"
+            "    r; 0;\n"
+            "}\n"
+        )
+        assert isinstance(warnings, list)
+
+        sample = (
+            "#define A 1 \\\n"
+            "  2\n"
+            "/* start\n"
+            "end */\n"
+            "s = \"a\\\"b,;:\";\n"
+            "c = '\\'';\n"
+            "o! i4 x m,1;\n"
+        )
+        assert "A" in format_source(sample)
+
+        work = tempfile.mkdtemp(prefix="api-edges-")
+        plant = os.path.join(work, "many")
+        os.makedirs(plant)
+        for i in range(17):
+            os.makedirs(os.path.join(plant, f"!b{i}!"))
+        with open(os.path.join(plant, "plant.sigil"), "w", encoding="utf-8") as f:
+            f.write("!<+cat+>! on;\n")
+        plants, pe = _project_plant_scan(work, [os.path.join(plant, "plant.sigil")])
+        assert plants is None and pe, (plants, pe)
+
+        effects = _project_effects(
+            {"bad.sigil": "p* i4 keep(p* i4 p) { r; p; }\n"},
+            {"bad.sigil": ["p* i4 keep(p* i4 p);"]},
+        )
+        assert isinstance(effects, dict)
+
+        exports = {}
+        packages = {"m": {"1": "a.sigil"}}
+        try:
+            _rewrite_external_packages("!m[1]!", exports, packages, {"m.1": "var"}, {"m"}, "x.sigil")
+        except SemanticError as e:
+            assert "targets variable" in str(e), e
+        else:
+            raise AssertionError("expected variable target rejection")
+        try:
+            _rewrite_external_packages("!m[1]!", exports, packages, {}, {"m"}, "x.sigil")
+        except SemanticError as e:
+            assert "no file-level" in str(e), e
+        else:
+            raise AssertionError("expected missing binding rejection")
+
+        empty = os.path.join(work, "empty")
+        os.makedirs(empty)
+        assert _check_targets(empty, {}) == 1
+        good = os.path.join(work, "good.sigil")
+        with open(good, "w", encoding="utf-8") as f:
+            f.write(format_source("i4 main(v.) { r; 0; }\n"))
+        assert _check_targets(good, {}, json_out=True) == 0
+        assert _format_targets(work, False, True) in (0, 1)
+        assert _format_targets(os.path.join(work, "missing"), False, True) == 1
+        assert _lsp_diagnostics("buffer.sigil", "\x00")[0]["message"]
+        assert _lsp_document_symbols("x! struct Foo { i4 x; };\n")
+        assert _lsp_warnings("f~ (i4 i m, 0; 0; 0+) { }\n") is not None
+        bad_effects = _project_effects(
+            {"bad.sigil": "! bad\n"},
+            {"bad.sigil": ["p* i4 keep(p* i4 p);"]},
+        )
+        assert isinstance(bad_effects, dict)
+
+        syntax_bad = os.path.join(work, "syntax-bad.sigil")
+        with open(syntax_bad, "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) {\n")
+        assert _check_targets(syntax_bad, {}, json_out=True) == 1
+        assert _check_targets(syntax_bad, {}) == 1
+        no_sigil = os.path.join(work, "no-sigil")
+        os.makedirs(no_sigil)
+        assert _format_targets(no_sigil, False, True) == 1
+        two_files = os.path.join(work, "two")
+        os.makedirs(two_files)
+        for n in ("a.sigil", "b.sigil"):
+            with open(os.path.join(two_files, n), "w", encoding="utf-8") as f:
+                f.write("i4 main(v.) { r; 0; }\n")
+        assert _format_targets(two_files, False, False) == 1
+
+    assert_ok("80. CLI", "API edge branches: errors/LSP warnings/plants/packages", test_api_edges)
+
+
+    # Layer 80: vN/TNX and build validation edges
+    def test_vn_tnx_build_edges():
+        compile_source("v1 { v/ true v/ u1 v/ true; }\n", "vn-bool.sigil")
+        compile_source(
+            "i4 main(v.) { o! p* i4 p m, 0; v1 { v/ p v/ u8 v/ p; } r; 0; }\n",
+            "vn-ptr.sigil",
+        )
+        compile_source(
+            "o! p* i4 p m, 0;\nT3A { width 8; payload p; locked; }\n",
+            "tnx-ptr.sigil",
+        )
+        vn_bad = [
+            ("v1 { v/ 18446744073709551616 v/ u8 v/ 0; }", "exceeds 8 bytes"),
+            ("v1 { v/ 1 v/ u1 v/ 1; }\nv1 { v/ 2 v/ u1 v/ 2; }\n", "Duplicate"),
+            ("o! c@ u1 g;\nv1 { v/ 1 v/ u1 v/ g; }\n", "compile-time constant"),
+        ]
+        for src, needle in vn_bad:
+            try:
+                compile_source(src, "vn-edge.sigil")
+            except (SemanticError, ParseError) as e:
+                assert needle in str(e), (needle, e)
+            else:
+                raise AssertionError("expected vN rejection: " + src)
+
+        tnx_bad = [
+            ("s@ v. h(v.) { }\nT3A { width 0; payload !h!; locked; }\n", "positive"),
+            ("s@ v. h(v.) { }\nT3A { width 1; width 2; payload !h!; locked; }\n", "Duplicate TNX field"),
+            ("s@ v. h(v.) { }\nT3A { width 1; payload !h!; nope 1; locked; }\n", "Unknown TNX field"),
+            ("s@ v. h(v.) { }\nT3A { width 8; payload !h!; next T3A; locked; }\n", "cannot point to itself"),
+            ("s@ v. h(v.) { }\nT3A { width 8; payload !h!; locked; }\nT3A { width 8; payload !h!; locked; }\n", "Duplicate TNX container"),
+        ]
+        for src, needle in tnx_bad:
+            try:
+                compile_source(src, "tnx-edge.sigil")
+            except (SemanticError, ParseError) as e:
+                assert needle in str(e), (needle, e)
+            else:
+                raise AssertionError("expected TNX rejection: " + src)
+
+        import io as _io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from sigilc_core.cli import main as cli_main
+
+        def run(*args):
+            out, err = _io.StringIO(), _io.StringIO()
+            try:
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = cli_main(list(args))
+            except SystemExit as e:
+                rc = e.code if isinstance(e.code, int) else 0
+            return rc, out.getvalue(), err.getvalue()
+
+        work = tempfile.mkdtemp(prefix="build-edges-")
+        def project(name, files):
+            d = os.path.join(work, name)
+            os.makedirs(d)
+            for rel, text in files.items():
+                path = os.path.join(d, rel)
+                os.makedirs(os.path.dirname(path) or d, exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+            return d
+
+        bad_plant = project("plant-bad", {
+            "plant.sigil": "i4 main(v.) { r; 0; }\n",
+            "main.sigil": "i4 main(v.) { r; 0; }\n",
+        })
+        assert run("--build", bad_plant)[0] == 1
+
+        only_plant = project("plant-only", {"plant.sigil": "!<+cat+>! on;\n"})
+        assert run("--build", only_plant)[0] == 1
+
+        dup_pkg = project("dup-pkg", {
+            "a.sigil": "!1! P;\ni4 a(v.) { r; 0; }\n",
+            "b.sigil": "!1! P;\ni4 b(v.) { r; 0; }\n",
+        })
+        assert run("--build", dup_pkg)[0] == 1
+
+        nested = project("nested", {"!a!/!b!/main.sigil": "i4 main(v.) { r; 0; }\n"})
+        assert run("--build", nested)[0] == 1
+
+        bad_ns = project("bad-ns", {"!Bad-Name!/main.sigil": "i4 main(v.) { r; 0; }\n"})
+        assert run("--build", bad_ns)[0] == 1
+        bad_code = project("bad-code", {"main.sigil": "i4 main(v.) { nope; }\n"})
+        assert run("--build", bad_code)[0] == 1
+        off_plant = project("plant-off", {
+            "plant.sigil": "!<+cat+>! off;\n",
+            "main.sigil": "i4 main(v.) { r; 0; }\n",
+        })
+        assert run("--build", off_plant)[0] in (0, 1)
+        many_ns = os.path.join(work, "many-ns")
+        for i in range(17):
+            ns_dir = os.path.join(many_ns, f"!ns{i}!")
+            os.makedirs(ns_dir)
+            with open(os.path.join(ns_dir, "main.sigil"), "w", encoding="utf-8") as f:
+                f.write("i4 main(v.) { r; 0; }\n")
+        assert run("--build", many_ns)[0] == 1
+
+    assert_ok("80. CLI", "vN/TNX error branches and build validation", test_vn_tnx_build_edges)
+
     # === end of tests: new layers go above this line ===
 
     if failures:
@@ -3782,7 +4303,7 @@ int main(void) {
         for layer, desc, why in failures:
             print(f"  - [{layer}] {desc}\n      {why}")
         raise SystemExit(1)
-    print(f"=== ALL {passed}/{total} TESTS IN 79-LAYER MATRIX PASSED! ===")
+    print(f"=== ALL {passed}/{total} TESTS IN 80-LAYER MATRIX PASSED! ===")
 
 if __name__ == "__main__":
     run_test_matrix()

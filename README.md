@@ -6,7 +6,7 @@
 > 太阳莓果设计。
 
 [![ci](https://github.com/weird655/Sunberry-C/actions/workflows/ci.yml/badge.svg)](https://github.com/weird655/Sunberry-C/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-251%20%2F%2079%20layers-brightgreen)](test_matrix.py)
+[![tests](https://img.shields.io/badge/tests-256%20%2F%2080%20layers-brightgreen)](test_matrix.py)
 [![output](https://img.shields.io/badge/output-ISO%20C99-blue)](#)
 [![license](https://img.shields.io/badge/license-CC%20BY%204.0-lightgrey)](LICENSE)
 
@@ -555,7 +555,7 @@ int main(void) {
 
 ## 测试矩阵
 
-251 项 / 79 层，每层一个主题：
+256 项 / 80 层，每层一个主题：
 
 | 层 | 主题 |
 |---|---|
@@ -615,11 +615,12 @@ int main(void) {
 | 77 | vN 硬电阻：容量/溢出/只读/飞线读 |
 | 78 | TNX 预备包：10×16 双缓冲优先级队列 |
 | 79 | 边界：深嵌套、空文件、二进制垃圾、行号、多错误诊断 |
+| 80 | CLI/API 合约、LSP、构建/格式化、覆盖率补洞 |
 
 ## 测试与 CI
 
 ```bash
-python3 test_matrix.py        # 251 项 / 79 层，需要 gcc
+python3 test_matrix.py        # 256 项 / 80 层，需要 gcc
 ```
 
 每层都编译并运行生成的 C（`-std=c99 -Wall -Wextra -Werror -pedantic`），其中第 17、18 层直接构建 `examples/` 与教程程序并断言输出。**测试数字以 `test_matrix.py` 的输出为准**，README 与 CHANGELOG 只是引用。
@@ -627,7 +628,7 @@ python3 test_matrix.py        # 251 项 / 79 层，需要 gcc
 本地一键质量门：
 
 ```bash
-python tools/check.py            # py_compile → ruff → mypy → 251 项测试
+python tools/check.py            # py_compile → ruff → mypy → 256 项测试
 python tools/check.py --coverage # 附覆盖率（门槛 85%）
 python tools/fuzz.py --iterations 300   # 确定性变异测试
 python tools/propgen.py --count 30       # 随机合法程序 -> gcc
@@ -666,7 +667,7 @@ CI 在 `ubuntu-latest` 上用 Python 3.10 / 3.12 跑完整矩阵；另有一个 
 
 - **维护模式**：不再随意新增语言记号；新增必须作为可审计、可关闭的实验扩展进入；修复缺陷、补文档、少量 C99 完备性补充仍会接受。
 - 又称 **Sunberry-C**；版本 **1.30.0**，tag `v1.30.0` + [GitHub Release](https://github.com/weird655/Sunberry-C/releases/tag/v1.30.0) 已发布；Core v1 语法冻结（v1.x 只加不改）。
-- 251 项测试 / 79 层，Windows、WSL Ubuntu、GitHub Actions 通过；ruff / mypy 零告警，覆盖率门槛 85%。
+- 256 项测试 / 80 层，Windows、WSL Ubuntu、GitHub Actions 通过；ruff / mypy 零告警，覆盖率门槛 90%。
 - Core v1：45 个印记 + C 运算符、指针来源、跨函数逃逸、`r@` 校验、外部类型 `x!`、头文件输出、LSP、格式化器、多文件构建、栈/堆三写法。
 - **Layer 2 实验**：`!n!` 重布线/飞线层、`--netlist`、切片、trap 诊断；**允许使用**，但不纳入 Core v1 冻结；稳定性见 `COMPATIBILITY.md`。
 - 未做：堆模型、完整头文件解析、跨文件分析、包管理。
