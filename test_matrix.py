@@ -3893,12 +3893,56 @@ int main(void) {
         assert r.returncode == 2, r.stderr
         r = run("--build", build_dir, "--netlist", "--netlist-format", "json", "-o", os.path.join(work, "project.json"))
         assert r.returncode == 0, r.stderr
+        r = run("--build", build_dir, "--netlist")
+        assert r.returncode == 0, r.stderr
         r = run("--build", build_dir, "-o", os.path.join(work, "app"), "--run")
         assert r.returncode == 0, r.stderr
         r = run("--build", build_dir, "-o", os.path.join(work, "app2"), "--emit-header")
         assert r.returncode == 0, r.stderr
         r = run("--build", build_dir, "--checked", "-o", os.path.join(work, "app3"))
         assert r.returncode == 0, r.stderr
+        missing_src = os.path.join(work, "missing.sigil")
+        r = run("--netlist", missing_src)
+        assert r.returncode == 1
+        r = run("--build", os.path.join(work, "missing-build"), "--netlist")
+        assert r.returncode == 1
+        bad_src = os.path.join(work, "bad.sigil")
+        with open(bad_src, "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) {\n")
+        r = run(bad_src, "-o", os.path.join(work, "bad.c"))
+        assert r.returncode == 1
+        lib_src = os.path.join(work, "lib.sigil")
+        with open(lib_src, "w", encoding="utf-8") as f:
+            f.write("i4 helper(v.) { r; 1; }\n")
+        r = run(lib_src, "-o", os.path.join(work, "lib.c"))
+        assert r.returncode == 0 and "no 'main'" in r.stderr
+        import importlib
+        cli_mod = importlib.import_module("sigilc_core.cli")
+        old_lsp = cli_mod._lsp_run
+        cli_mod._lsp_run = lambda completion: 0
+        try:
+            assert run("--lsp").returncode == 0
+        finally:
+            cli_mod._lsp_run = old_lsp
+        r = run(src, "--netlist")
+        assert r.returncode == 0 and "!1!" not in r.stdout
+        empty_src = os.path.join(work, "empty.sigil")
+        with open(empty_src, "w", encoding="utf-8"):
+            pass
+        r = run(empty_src, "-o", os.path.join(work, "empty.c"))
+        assert r.returncode == 0 and "empty input" in r.stderr
+        cli_mod = importlib.import_module("sigilc_core.cli")
+        old_main = cli_mod.main
+        cli_mod.main = lambda: (_ for _ in ()).throw(SemanticError("wrapped"))
+        try:
+            try:
+                cli_mod.cli()
+            except SystemExit as e:
+                assert e.code == 1
+            else:
+                raise AssertionError("cli wrapper should exit 1")
+        finally:
+            cli_mod.main = old_main
         empty_dir = os.path.join(work, "empty-build")
         os.makedirs(empty_dir)
         r = run("--build", empty_dir)
@@ -4106,6 +4150,7 @@ int main(void) {
                          "api.sigil", "one\ntwo\n")
         assert "boom" in err.getvalue() and "plain failure" in err.getvalue()
 
+        assert _lsp_warnings("o!;\n") == []
         warnings = _lsp_warnings(
             "i4 main(v.) {\n"
             "    o! i4 __hidden m, 1;\n"
@@ -4127,6 +4172,11 @@ int main(void) {
             "o! i4 x m,1;\n"
         )
         assert "A" in format_source(sample)
+        assert format_source("x // tail\n")
+        assert format_source("x /* tail */\n")
+        assert format_source("o! i4 x m,1 ;\n")
+        assert format_source("foo ,bar\n") == "foo, bar\n"
+        assert format_source("x/*c*/\n")
 
         work = tempfile.mkdtemp(prefix="api-edges-")
         plant = os.path.join(work, "many")
@@ -4171,6 +4221,61 @@ int main(void) {
         assert _lsp_diagnostics("buffer.sigil", "\x00")[0]["message"]
         assert _lsp_document_symbols("x! struct Foo { i4 x; };\n")
         assert _lsp_warnings("f~ (i4 i m, 0; 0; 0+) { }\n") is not None
+        for pkg_src in (
+            "!64! P;\ni4 main(v.) { r; 0; }\n",
+            "!01! P;\ni4 main(v.) { r; 0; }\n",
+            "!1!! m, x;\ni4 main(v.) { r; 0; }\n",
+            "!>1<! a b;\ni4 main(v.) { r; 0; }\n",
+            "!1! m, missing;\ni4 main(v.) { r; 0; }\n",
+        ):
+            try:
+                compile_source(pkg_src, "pkg-edge.sigil")
+            except (SemanticError, ParseError):
+                pass
+            else:
+                raise AssertionError("expected package rejection: " + pkg_src)
+
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from sigilc_core.api import _build_project
+        with patch("sigilc_core.api.os.listdir", side_effect=OSError("nope")):
+            plants, perr = _project_plant_scan(work, [os.path.join(plant, "plant.sigil")])
+            assert plants is None and "cannot list" in perr
+        with patch("sigilc_core.api.check_source", side_effect=SemanticError("no location")):
+            assert _check_targets(good, {}, json_out=True) == 1
+        asan_dir = os.path.join(work, "asan-build")
+        os.makedirs(asan_dir)
+        with open(os.path.join(asan_dir, "main.sigil"), "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) { r; 0; }\n")
+        args = SimpleNamespace(
+            build=asan_dir, header=None, emit_header=False,
+            output_opt=None, output=None, prelude=None, bounds_check=True,
+            no_line=False, strict=False, checked=False, checked_strict=False,
+            checked_external=False, allow_external=[], asan=True, tsan=True,
+            ub_check=False, cc="gcc", cflags="-std=c99", run=False,
+        )
+        try:
+            _build_project(args, {})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected asan+tsan rejection")
+        many_pkg = os.path.join(work, "many-pkg")
+        os.makedirs(many_pkg)
+        with open(os.path.join(many_pkg, "main.sigil"), "w", encoding="utf-8") as f:
+            for i in range(65):
+                f.write(f"!{i}! P{i};\n")
+            f.write("i4 main(v.) { r; 0; }\n")
+        many_args = SimpleNamespace(
+            build=many_pkg, header=None, emit_header=False,
+            output_opt=None, output=None, prelude=None, bounds_check=True,
+            no_line=False, strict=False, checked=False, checked_strict=False,
+            checked_external=False, allow_external=[], asan=False, tsan=False,
+            ub_check=False, cc="gcc", cflags="-std=c99", run=False,
+        )
+        assert _build_project(many_args, {}) == 1
+
         bad_effects = _project_effects(
             {"bad.sigil": "! bad\n"},
             {"bad.sigil": ["p* i4 keep(p* i4 p);"]},
@@ -4205,6 +4310,34 @@ int main(void) {
         compile_source(
             "o! p* i4 p m, 0;\nT3A { width 8; payload p; locked; }\n",
             "tnx-ptr.sigil",
+        )
+        compile_source(
+            "i4 h(i4 x) { r; x; }\n"
+            "i4 main(v.) { o! (f^(i4) -> i4) fp m, h; v1 { v/ fp v/ u8 v/ fp; } r; 0; }\n",
+            "vn-fnptr.sigil",
+        )
+        try:
+            compile_source("o! u2 x m, 1;\nv1 { v/ 1 v/ u1 v/ x; }\n", "vn-ret-over.sigil")
+        except SemanticError as e:
+            assert "exceeds resistor" in str(e), e
+        else:
+            raise AssertionError("expected vN return overflow")
+        try:
+            compile_source("o! i4[2] a m, {1, 2};\nv1 { v/ a v/ u8 v/ 1; }\n", "vn-array-data.sigil")
+        except SemanticError as e:
+            assert "unsupported size" in str(e), e
+        else:
+            raise AssertionError("expected vN array data rejection")
+        try:
+            compile_source("o! u4 x m, 4;\no! i4[2] a m, {1, 2};\nv1 { v/ x v/ u4 v/ a; }\n", "vn-array-ret.sigil")
+        except SemanticError as e:
+            assert "unsupported size" in str(e), e
+        else:
+            raise AssertionError("expected vN array return rejection")
+        compile_source(
+            "i4 h(i4 x) { r; x; }\no! (f^(i4) -> i4) fp m, h;\n"
+            "T3A { width 8; payload fp; locked; }\n",
+            "tnx-fnptr.sigil",
         )
         vn_bad = [
             ("v1 { v/ 18446744073709551616 v/ u8 v/ 0; }", "exceeds 8 bytes"),
@@ -4293,8 +4426,215 @@ int main(void) {
             with open(os.path.join(ns_dir, "main.sigil"), "w", encoding="utf-8") as f:
                 f.write("i4 main(v.) { r; 0; }\n")
         assert run("--build", many_ns)[0] == 1
+        build_dir = project("sanitize-build", {"main.sigil": "i4 main(v.) { r; 0; }\n"})
+        assert run("--build", build_dir, "--cflags", "-this-is-bad", "-o", os.path.join(work, "badlink"))[0] != 0
+        assert run("--build", build_dir, "--ub-check", "-o", os.path.join(work, "ub"))[0] in (0, 1)
+        assert run("--build", build_dir, "--asan", "-o", os.path.join(work, "asan"))[0] in (0, 1)
+        assert run("--build", build_dir, "--tsan", "-o", os.path.join(work, "tsan"))[0] in (0, 1)
+        ns_build = project("ns-build", {
+            "!math!/a.sigil": "!1! add;\ni4 add(i4 a, i4 b) { r; a + b; }\n",
+            "main.sigil": "i4 main(v.) { r; !math[1]!(1, 2); }\n",
+        })
+        assert run("--build", ns_build)[0] in (0, 1)
+        ns_ok = project("ns-ok", {
+            "!math!/a.sigil": "i4 get(v.) { r; 5; }\n!1! P;\n!1! m, get;\n",
+            "!main!/main.sigil": "i4 main(v.) { r; !math[1]!(); }\n",
+        })
+        assert run("--build", ns_ok, "-o", os.path.join(work, "nsapp"))[0] == 0
+        gate_dir = project("plant-gate", {
+            "plant.sigil": "!<+cat+>! on;\n",
+            "main.sigil": "!<+cat+>! on;\ni4 main(v.) { r; 0; }\n",
+        })
+        assert run("--build", gate_dir)[0] == 1
 
     assert_ok("80. CLI", "vN/TNX error branches and build validation", test_vn_tnx_build_edges)
+
+
+    # Layer 81: type system / netlist helpers
+    def test_type_netlist_helpers():
+        from sigilc_core.nodes import LiteralExpr
+        from sigilc_core.type_system import (
+            ArrayType,
+            BaseType,
+            FunctionPointerType,
+            PointerType,
+            TypeNode,
+            decay_parameter_type,
+            format_c_declarator,
+            is_const_qualified,
+            is_volatile_qualified,
+            qualifiers_are_assignable,
+            strip_top_qualifiers,
+            types_compatible_for_assign,
+            types_equal,
+            with_const,
+            with_volatile,
+        )
+
+        b = BaseType(1, 1, "int32_t")
+        p = PointerType(1, 1, b, is_const=True)
+        a = ArrayType(1, 1, b, LiteralExpr(1, 1, "2", "INT_NUM"), size_val=2)
+        fn = FunctionPointerType(1, 1, [(b, "x")], b, is_variadic=True)
+        unknown = TypeNode(1, 1)
+
+        assert is_const_qualified(p) and not is_const_qualified(b)
+        assert is_volatile_qualified(with_volatile(b))
+        assert is_const_qualified(with_const(a))
+        assert is_volatile_qualified(with_volatile(fn))
+        assert isinstance(strip_top_qualifiers(p), PointerType)
+        assert isinstance(strip_top_qualifiers(a), ArrayType)
+        assert isinstance(strip_top_qualifiers(fn), FunctionPointerType)
+        assert isinstance(strip_top_qualifiers(unknown), TypeNode)
+        assert isinstance(with_const(unknown), TypeNode)
+        assert isinstance(with_volatile(unknown), TypeNode)
+        assert qualifiers_are_assignable(b, with_const(b)) is False
+        assert qualifiers_are_assignable(a, a)
+        assert isinstance(decay_parameter_type(a), PointerType)
+        assert decay_parameter_type(b) is b
+        assert types_equal(b, b)
+        assert types_equal(p, p)
+        assert types_equal(a, a)
+        assert types_equal(fn, fn)
+        assert not types_equal(b, p)
+        assert not types_equal(b, unknown)
+        assert types_compatible_for_assign(b, b)
+        assert types_compatible_for_assign(p, a)
+        assert types_compatible_for_assign(p, PointerType(1, 1, b))
+        assert types_compatible_for_assign(PointerType(1, 1, BaseType(1, 1, "void")), p)
+        assert types_compatible_for_assign(ArrayType(1, 1, b, LiteralExpr(1, 1, "2", "INT_NUM")), a)
+        assert format_c_declarator(b, "x") == "int32_t x"
+        assert "*" in format_c_declarator(p, "x")
+        assert "[2]" in format_c_declarator(a, "x")
+        assert "..." in format_c_declarator(fn, "cb")
+        assert not is_const_qualified(unknown)
+        assert not is_volatile_qualified(unknown)
+        assert is_const_qualified(with_const(fn))
+        assert is_volatile_qualified(with_volatile(p))
+        assert is_volatile_qualified(with_volatile(a))
+        fn_bad = FunctionPointerType(1, 1, [(b, "x")], b, is_variadic=False)
+        assert not types_equal(fn, fn_bad)
+        fn_ret = FunctionPointerType(1, 1, [(b, "x")], PointerType(1, 1, b), is_variadic=True)
+        assert not types_equal(fn, fn_ret)
+        try:
+            format_c_declarator(unknown)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("expected unknown TypeNode rejection")
+
+        src = "i4 add(i4 a, i4 b) { r; a + b; }\n!1! P;\n!1! m, add;\ni4 main(v.) { r; !/1/!(1, 2); }\n"
+        for fmt in ("text", "dot", "json", "mermaid", "html", "viewer"):
+            out = netlist_source(src, "net.sigil", format=fmt)
+            assert out, fmt
+        pdir = tempfile.mkdtemp(prefix="project-net-")
+        for name in ("a.sigil", "b.sigil"):
+            with open(os.path.join(pdir, name), "w", encoding="utf-8") as f:
+                f.write("i4 main(v.) { r; 0; }\n")
+        for fmt in ("text", "json", "dot", "mermaid", "html", "viewer"):
+            out = project_netlist_source(pdir, format=fmt)
+            assert out, fmt
+        bad_pdir = tempfile.mkdtemp(prefix="project-net-bad-")
+        with open(os.path.join(bad_pdir, "plant.sigil"), "w", encoding="utf-8") as f:
+            f.write("i4 main(v.) { r; 0; }\n")
+        try:
+            project_netlist_source(bad_pdir, format="json")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected bad plant netlist rejection")
+
+    assert_ok("81. types", "type-system branches and all netlist formats", test_type_netlist_helpers)
+
+
+    # Layer 82: parser error surface
+    def test_parser_error_surface():
+        bad = [
+            "i4 f(i4 a, i4 a) { r; a; }",
+            "i4 f(v., i4 x) { r; x; }",
+            "i4 f(...) { r; 0; }",
+            "i4 main(v.) { o! i4[0] a; r; 0; }",
+            "s{ S { u1 x w! 9; };",
+            "s{ S { f4 x w! 3; };",
+            "i4 main(v.) { b!; r; 0; }",
+            "i4 main(v.) { c^; r; 0; }",
+            "v. f(v.) { r; 1; }",
+            "i4 f(v.) { o! p* i4 p m, p@ (1 + 2); r; 0; }",
+            "i4 main(v.) { s? (1) { k: 1: { b!; } k: 1: { b!; } } r; 0; }",
+            "i4 main(v.) { s? (1) { d: { b!; } d: { b!; } } r; 0; }",
+            "i4 main(v.) { o! i4[2] a m, { 1, 2, 3 }; r; 0; }",
+            "i4 main(v.) { o! u4 x m, NULL; r; 0; }",
+            "i4 main(v.) { g! nowhere; r; 0; }",
+            "i4 main(v.) { l! x; l! x; r; 0; }",
+            "i4 f(i4 a); i4 f(i4 a, i4 b) { r; a + b; }",
+            "i4 f(i4 a) { r; a; } i4 f(i4 a) { r; a + 1; }",
+        ]
+        for src in bad:
+            try:
+                compile_source(src, "parser-error.sigil")
+            except (SemanticError, ParseError):
+                pass
+            else:
+                raise AssertionError("expected parser rejection: " + src)
+
+    assert_ok("82. parser", "parser error surface: params/arrays/bitfields/control/labels", test_parser_error_surface)
+
+
+    # Layer 83: confinement error branches
+    def test_confine_errors():
+        cases = [
+            "!/[0]/! m, f1; !/[0]/! m, f2;",
+            "!/[0]/! m, 123;",
+            "!/[[0]]/! m, f1; !/[[0]]/! m, f2;",
+            "!/[[0]]/! m, f1, f2; ![x]! !/[[0]]/! { }",
+            "!/[[0]]/! m, f1, f2; ![3]! !/[[0]]/! { }",
+            "!/[0]/! m, f1, f2; ![2]! !/[0]/! { }",
+            "!/[0]/! m, f1; ![1]! !/[0]/! { o! i4 x m, 1; }",
+            "!/[0]/! m, f1; !/[1]/! m, !/[0]/!; !/[0]/! m, !/[1]/!; ![11]! !/[0]/! { }",
+        ]
+        for src in cases:
+            try:
+                compile_source(src, "confine-edge.sigil")
+            except (SemanticError, ParseError, LexerError):
+                pass
+            else:
+                raise AssertionError("expected confinement rejection: " + src)
+
+    assert_ok("83. confine", "confinement group/mask/lockdown error branches", test_confine_errors)
+
+
+    # Layer 84: more parser/attribute/sizeof errors
+    def test_parser_error_surface2():
+        bad = [
+            "a@(no_such) o! u4 x m, 0;",
+            "a@(aligned(0)) o! u4 x m, 0;",
+            "a@(aligned(3)) o! u4 x m, 0;",
+            "a@(section(1)) o! u4 x m, 0;",
+            "a@(unused, unused) s@ i4 f(v.) { r; 0; }",
+            "i4 main(v.) { z? v.; r; 0; }",
+            "s{ Fwd; u4 f(v.) { r; z? Fwd; }",
+            "i4 f(v.) { o! p* i4 p m, p@ (1 + 2); r; 0; }",
+            "i4 f(f4 x) { o! i4 y m, x & 1; r; 0; }",
+            "i4 f(p* i4 p, p* i4 q) { o! p* i4 r m, p + q; r; 0; }",
+            "i4 f(f4 x) { o! p* i4 p m, (p* i4)x; r; 0; }",
+            "i4 main(v.) { o! u4[2] a m, { }; r; 0; }",
+            "i4 main(v.) { o! u4 x m, { 1 }; r; 0; }",
+            "i4 f(i4 x) { s? (x) { k: y: { b!; } } }",
+            "i4 f(i4 x) { s? (x) { k: 2: { b!; } k: (8 % 3): { b!; } } }",
+            "i4 f(i4 x) { s? (x) { d: { b!; } d: { b!; } } }",
+            "i4 f(i4 x) { s? (x) { k: 1: { b!; } k: 1: { b!; } } }",
+            "i4 f(v.) { b!; r; 0; }",
+            "i4 f(v.) { c^; r; 0; }",
+            "v. f(i4 x) { r; x; }",
+        ]
+        for src in bad:
+            try:
+                compile_source(src, "parser-error2.sigil")
+            except (SemanticError, ParseError, LexerError):
+                pass
+            else:
+                raise AssertionError("expected parser rejection: " + src)
+
+    assert_ok("84. parser", "attribute/sizeof/pointer/switch error branches", test_parser_error_surface2)
 
     # === end of tests: new layers go above this line ===
 
@@ -4303,7 +4643,7 @@ int main(void) {
         for layer, desc, why in failures:
             print(f"  - [{layer}] {desc}\n      {why}")
         raise SystemExit(1)
-    print(f"=== ALL {passed}/{total} TESTS IN 80-LAYER MATRIX PASSED! ===")
+    print(f"=== ALL {passed}/{total} TESTS IN 84-LAYER MATRIX PASSED! ===")
 
 if __name__ == "__main__":
     run_test_matrix()

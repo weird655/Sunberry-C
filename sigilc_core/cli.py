@@ -149,7 +149,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"Netlist   {args.output_opt}")
             else:
                 sys.stdout.write(out)
-        except (LexerError, ParseError, SemanticError) as e:
+        except (LexerError, ParseError, SemanticError, OSError) as e:
             _print_error(e, os.path.basename(args.input), src)
             return 1
         return 0
