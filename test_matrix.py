@@ -4599,6 +4599,26 @@ int main(void) {
             else:
                 raise AssertionError("expected confinement rejection: " + src)
 
+        for good in (
+            """!/[0]/! m, f1;
+!/[1]/! m, f2;
+![1]! !/[0]/! {
+    !/[2]/! m, f1;
+    ![1]! !/[1]/! {
+        !3! X;
+    }
+}
+i4 f1(v.) { r; 0; }
+""",
+            """!/[0]/! m, f1;
+![1]! !/[0]/! {
+    !/[[2]]/! m, f1;
+}
+i4 f1(v.) { r; 0; }
+""",
+        ):
+            compile_source(good, "confine-good.sigil")
+
     assert_ok("83. confine", "confinement group/mask/lockdown error branches", test_confine_errors)
 
 
@@ -4667,14 +4687,34 @@ i4 main(v.) { o! P p; o! U u; i? (1) { r; 0; } e: { r; 1; } }
         assert "SIGIL_CHECKED_ARITH" in hdr and "SIGIL_CHECKED_STRICT" in hdr and '#include "p.h"' in hdr
         proto = compile_header("i4 api(i4 x);\n", "proto.sigil", "proto.h")
         assert "api" in proto
+        codegen_src = """#define K 3
+x! struct H { u1 a w! 1; i4[2] b; };
+i4 main(v.) {
+    o! u4 x m, 1;
+    x m+ 1;
+    i? (x) { r; 0; } e: { r; 1; }
+}
+"""
+        cc = compile_source(codegen_src, "codegen2.sigil", checked=True)
+        assert "H" in cc and "else" in cc
+        cc2 = compile_source(
+            "i4 main(v.) {\n#define Q 1\n    i? (1) { r; 0; } e: { r; 1; }\n}\n",
+            "codegen3.sigil",
+        )
+        assert "else" in cc2
         a_no_size = ArrayType(1, 1, b, LiteralExpr(1, 1, "n", "INT_NUM"))
         assert _field_size_expr(a_no_size) is None
 
         graph_src = """o! u4 reg m, 0;
+i4 f1(v.) { r; 0; }
+i4 f2(v.) { r; 1; }
 !1! A;
 !1! m, reg;
 !2! B;
 !2! m, !/1/!;
+!5! F;
+!5! m, bit(reg, 3);
+!>3<! f1 f2;
 !/[0]/! m, f1, f2;
 !/[[1]]/! m, fn1, fn2;
 ![10]! !/[0]/! {
@@ -4686,6 +4726,53 @@ i4 main(v.) { r; 0; }
 """
         for fmt in ("text", "dot", "json", "mermaid", "html", "viewer"):
             assert netlist_source(graph_src, "!math!/edge.sigil", format=fmt)
+        rich = """o! u4 reg m, 0;
+i4 f1(v.) { r; 0; }
+!1! F;
+!1! m, byte(reg, 0);
+!2! B;
+!2! m, f1;
+!3! T;
+!4!! M;
+!/[0]/! m, f1;
+![1]! !/[0]/! {
+    !5! X;
+    !5! m, f1;
+}
+i4 main(v.) { r; 0; }
+"""
+        for fmt in ("text", "dot", "json", "mermaid", "html", "viewer"):
+            assert netlist_source(rich, "!math!/edge.sigil", format=fmt)
+        local_src = """i4 f1(v.) { r; 0; }
+i4 f2(v.) { r; 1; }
+i4 main(v.) {
+    o! i4 a m, 1;
+    !1! m, a;
+    !2! m, !/1/!;
+    !>3<! f1 f2;
+    r; 0;
+}
+"""
+        for fmt in ("text", "dot", "json", "mermaid", "html", "viewer"):
+            assert netlist_source(local_src, "!math!/local.sigil", format=fmt)
+        from sigilc_core.netlist import _field_text, _type_name
+        assert _type_name(ArrayType(1, 1, b, LiteralExpr(1, 1, "2", "INT_NUM"), size_val=2)) == "arraytype"
+        assert _field_text("r", 0, 8, 0) == "byte(r, i=0)"
+        try:
+            netlist_source("i4 main(v.) { r; 0; }", "x.sigil", format="bogus")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected unknown netlist format rejection")
+        plocal = tempfile.mkdtemp(prefix="project-local-")
+        nm = os.path.join(plocal, "!math!")
+        os.makedirs(nm)
+        with open(os.path.join(nm, "a.sigil"), "w", encoding="utf-8") as f:
+            f.write("i4 f1(v.) { r; 0; }\n!1! P;\n!1! m, f1;\n")
+        with open(os.path.join(nm, "b.sigil"), "w", encoding="utf-8") as f:
+            f.write("i4 f1(v.) { r; 0; }\n!1! P;\n!1! m, f1;\ni4 f2(v.) { r; !/1/!(); }\n")
+        for fmt in ("text", "json"):
+            assert project_netlist_source(plocal, format=fmt)
 
         from sigilc_core.confine import Confinement
         from sigilc_core.nodes import SemanticError
@@ -4757,6 +4844,116 @@ i4 main(v.) { r; 0; }
 
     assert_ok("87. lexer", "hex/binary/suffix/comment/escape and malformed literals", test_lexer_literal_edges)
 
+
+    # Layer 88: expression emitter branches
+    def test_emit_expr_branches():
+        from sigilc_core import nodes as N
+        from sigilc_core.type_system import BaseType, PointerType
+        b = BaseType(1, 1, "int32_t")
+        u = BaseType(1, 1, "uint64_t")
+        f = BaseType(1, 1, "float")
+        p = PointerType(1, 1, b)
+        lit = N.LiteralExpr(1, 1, "x")
+        lit.sem_type = f
+        cast = N.CastExpr(1, 1, b, lit)
+        N.set_checked_arith(True)
+        try:
+            assert "sigil_f2i" in N.emit_expr(cast)
+            star = N.UnaryExpr(1, 1, "*", N.IdentExpr(1, 1, "p"))
+            assert "SIGIL_NONNULL" in N.emit_expr(star)
+            neg = N.UnaryExpr(1, 1, "-", N.LiteralExpr(1, 1, "1"))
+            neg.sem_type = b
+            assert "sigil_neg" in N.emit_expr(neg)
+            idx = N.IndexExpr(1, 1, N.IdentExpr(1, 1, "a"), N.LiteralExpr(1, 1, "0"), bound=4)
+            assert "SIGIL_IDX" in N.emit_expr(idx)
+            bs = N.BitSliceExpr(1, 1, N.IdentExpr(1, 1, "x"), u, offset=3, width=1)
+            assert ">>" in N.emit_expr(bs)
+            bs2 = N.BitSliceExpr(1, 1, N.IdentExpr(1, 1, "x"), u, byte_index=0)
+            assert "unsigned char" in N.emit_expr(bs2)
+            mem = N.MemberExpr(1, 1, N.IdentExpr(1, 1, "p"), "x", True)
+            assert "->" in N.emit_expr(mem)
+            call = N.CallExpr(1, 1, N.IdentExpr(1, 1, "f"), [N.LiteralExpr(1, 1, "1")])
+            assert "SIGIL_NONNULL" in N.emit_expr(call)
+            sz = N.SizeofExpr(1, 1, b, None)
+            assert "sizeof" in N.emit_expr(sz)
+            al = N.AlignofExpr(1, 1, b)
+            assert "SIGIL_ALIGNOF" in N.emit_expr(al)
+            add = N.BinaryExpr(1, 1, "+", N.IdentExpr(1, 1, "p"), N.LiteralExpr(1, 1, "1"))
+            add.sem_type = p
+            add.left.sem_type = p
+            add.right.sem_type = b
+            assert "sigil_ptr_add" in N.emit_expr(add)
+            div = N.BinaryExpr(1, 1, "/", N.LiteralExpr(1, 1, "4"), N.LiteralExpr(1, 1, "2"))
+            div.sem_type = b
+            assert "sigil_div" in N.emit_expr(div)
+            shl = N.BinaryExpr(1, 1, "<<", N.LiteralExpr(1, 1, "1"), N.LiteralExpr(1, 1, "2"))
+            shl.sem_type = b
+            assert "sigil_shl" in N.emit_expr(shl)
+            unknown = N.ExprNode(1, 1)
+            try:
+                N.emit_expr(unknown)
+            except TypeError:
+                pass
+            else:
+                raise AssertionError("expected unknown expression rejection")
+        finally:
+            N.set_checked_arith(False)
+
+    assert_ok("88. emit", "checked/pointer/index/slice/member/sizeof expression emission", test_emit_expr_branches)
+
+
+    # Layer 89: package/confinement helper branches
+    def test_package_helper_edges():
+        bad = [
+            "!1! m, missing;",
+            "!/[0]/! m, 123;",
+            "!/[0]/! m, f1; ![2]! !/[0]/! { }",
+            "!/[0]/! m, f1; !/[1]/! m, !/[0]/!; !/[0]/! m, !/[1]/!;",
+            "!/[0]/! m, f1; !/[0]/! m, f2;",
+            "!1!! m, x;",
+            "!>1<! a b; !>1<! b a;",
+        ]
+        for src in bad:
+            try:
+                compile_source(src, "pkg-helper.sigil")
+            except (SemanticError, ParseError, LexerError):
+                pass
+            else:
+                raise AssertionError("expected package/confine rejection: " + src)
+
+    assert_ok("89. packages", "package alias/slot/landmine and group branches", test_package_helper_edges)
+
+
+    # Layer 90: attribute argument shapes
+    def test_attribute_arguments():
+        good = [
+            "a@(aligned(0x10)) o! u4 x m, 0;",
+            "a@(aligned(0b100)) o! u4 x m, 0;",
+            "a@(aligned(010)) o! u4 x m, 0;",
+            "a@(section(\".x\")) o! u4 x m, 0;",
+            "a@(unused, deprecated(\"old\")) s@ i4 f(v.) { r; 0; }",
+        ]
+        for src in good:
+            compile_source(src, "attr-good.sigil")
+        bad = [
+            "a@(unused(1)) o! u4 x m, 0;",
+            "a@(aligned) o! u4 x m, 0;",
+            "a@(aligned(0x)) o! u4 x m, 0;",
+            "a@(aligned(0b2)) o! u4 x m, 0;",
+            "a@(aligned(09)) o! u4 x m, 0;",
+            "a@(section) o! u4 x m, 0;",
+            "a@(section(\"a\", \"b\")) o! u4 x m, 0;",
+        ]
+        for src in bad:
+            try:
+                compile_source(src, "attr-bad.sigil")
+            except (SemanticError, ParseError, LexerError):
+                pass
+            else:
+                raise AssertionError("expected attribute rejection: " + src)
+
+    assert_ok("90. attrs", "attribute integer/string arity and malformed arguments", test_attribute_arguments)
+
     # === end of tests: new layers go above this line ===
 
     if failures:
@@ -4764,7 +4961,7 @@ i4 main(v.) { r; 0; }
         for layer, desc, why in failures:
             print(f"  - [{layer}] {desc}\n      {why}")
         raise SystemExit(1)
-    print(f"=== ALL {passed}/{total} TESTS IN 87-LAYER MATRIX PASSED! ===")
+    print(f"=== ALL {passed}/{total} TESTS IN 90-LAYER MATRIX PASSED! ===")
 
 if __name__ == "__main__":
     run_test_matrix()
