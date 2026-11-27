@@ -1,0 +1,40 @@
+Total targeted tests: 10
+[P0] cli_nonexistent: Nonexistent file crash/success -- Traceback (most recent call last):
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc.py", line 18, in <module>
+    cli()
+    ~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 210, in cli
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 162, in main
+    with open(in_path, "r", encoding="utf-8") as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'non_existent_file_xyz_123.sigil'
+
+[P1] tnx_invalid_width: TNX width 12 was accepted -- 
+[P1] netlist_text_fail: Netlist format text failed -- error: C:\Users\Admin\AppData\Local\Temp\tmp1_ar01as.sigil:1:22: Expected 'IDENT', got 'INT_NUM' ('1')
+
+[P1] netlist_dot_fail: Netlist format dot failed -- error: C:\Users\Admin\AppData\Local\Temp\tmpcm776xzb.sigil:1:22: Expected 'IDENT', got 'INT_NUM' ('1')
+
+[P1] netlist_json_fail: Netlist format json failed -- error: C:\Users\Admin\AppData\Local\Temp\tmpj3ny7j0l.sigil:1:22: Expected 'IDENT', got 'INT_NUM' ('1')
+
+[P1] netlist_mermaid_fail: Netlist format mermaid failed -- error: C:\Users\Admin\AppData\Local\Temp\tmpc7x26b70.sigil:1:22: Expected 'IDENT', got 'INT_NUM' ('1')
+
+[P1] netlist_html_fail: Netlist format html failed -- error: C:\Users\Admin\AppData\Local\Temp\tmp612k_tol.sigil:1:22: Expected 'IDENT', got 'INT_NUM' ('1')
+
+[P1] netlist_viewer_fail: Netlist format viewer failed -- error: C:\Users\Admin\AppData\Local\Temp\tmp_n4zew6b.sigil:1:22: Expected 'IDENT', got 'INT_NUM' ('1')
+
+[P0] binary_input_traceback: Binary input caused Traceback -- Traceback (most recent call last):
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc.py", line 18, in <module>
+    cli()
+    ~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 210, in cli
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 163, in main
+    src = f.read()
+  File "<frozen codecs>", line 325, in decode
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte
+
+[P2] build_diag_line_shift: Line number in build diagnostic was shifted: error: no .sigil files under 'C:\Users\Admin\AppData\Local\Temp\tmpykawaqdg\main.sigil'
+ -- 

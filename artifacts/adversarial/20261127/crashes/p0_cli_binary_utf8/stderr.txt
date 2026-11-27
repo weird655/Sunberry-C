@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc.py", line 18, in <module>
+    cli()
+    ~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 210, in cli
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 163, in main
+    src = f.read()
+  File "<frozen codecs>", line 325, in decode
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte

@@ -1,0 +1,7 @@
+Iterations: 1000
+Seed: 20261127
+Duration: 6.86s
+Clean Rejections: 862
+Clean Compiles: 138
+P0 Crashes: 0
+[P1] wrong_c_673: Generated C failed gcc syntax check

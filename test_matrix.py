@@ -5232,6 +5232,48 @@ i4 main(v.) {
 
     assert_ok("96. parser", "parser attribute/type/omit/eat direct branches", test_parser_helper_direct)
 
+
+    # Layer 97: CLI input I/O and preprocessor directive guards
+    def test_cli_input_guards():
+        import io as _io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from sigilc_core.cli import main as cli_main
+        work = tempfile.mkdtemp(prefix="cli-guards-")
+        missing = os.path.join(work, "missing.sigil")
+        directory = work
+        binary = os.path.join(work, "binary.sigil")
+        with open(binary, "wb") as f:
+            f.write(b"\x00\xff\xfe\x01\x02")
+        bad_pre = os.path.join(work, "bad_pre.sigil")
+        with open(bad_pre, "w", encoding="utf-8") as f:
+            f.write("#inclu$e <stdio.h>\ni4 main(v.) { r; 0; }\n")
+        good_pre = os.path.join(work, "good_pre.sigil")
+        with open(good_pre, "w", encoding="utf-8") as f:
+            f.write("#include <stdio.h>\n#define X 1\ni4 main(v.) { r; X - 1; }\n")
+
+        def run(*args):
+            out, err = _io.StringIO(), _io.StringIO()
+            try:
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = cli_main(list(args))
+            except SystemExit as e:
+                rc = e.code if isinstance(e.code, int) else 0
+            return rc, out.getvalue(), err.getvalue()
+
+        for path, needle in ((missing, "not found"), (directory, "directory"), (binary, "UTF-8")):
+            rc, _out, err = run(path)
+            assert rc == 1 and needle in err, (path, rc, err)
+            assert "Traceback" not in err
+        rc, _out, err = run(bad_pre, "-o", os.path.join(work, "bad.c"))
+        assert rc == 1 and "Unsupported preprocessor" in err, (rc, err)
+        rc, _out, err = run(good_pre, "-o", os.path.join(work, "good.c"))
+        assert rc == 0, (rc, err)
+        rc, _out, err = run("--netlist", missing)
+        assert rc == 1 and "not found" in err, (rc, err)
+
+    assert_ok("97. cli", "CLI missing/dir/binary/preprocessor guards", test_cli_input_guards)
+
     # === end of tests: new layers go above this line ===
 
     if failures:
@@ -5239,7 +5281,7 @@ i4 main(v.) {
         for layer, desc, why in failures:
             print(f"  - [{layer}] {desc}\n      {why}")
         raise SystemExit(1)
-    print(f"=== ALL {passed}/{total} TESTS IN 96-LAYER MATRIX PASSED! ===")
+    print(f"=== ALL {passed}/{total} TESTS IN 97-LAYER MATRIX PASSED! ===")
 
 if __name__ == "__main__":
     run_test_matrix()

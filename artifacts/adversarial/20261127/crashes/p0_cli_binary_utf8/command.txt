@@ -1,0 +1,1 @@
+python sigilc.py C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\artifacts\adversarial\20261127\crashes\p0_cli_binary_utf8\input.sigil

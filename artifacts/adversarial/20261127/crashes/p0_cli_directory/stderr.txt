@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc.py", line 18, in <module>
+    cli()
+    ~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 210, in cli
+    sys.exit(main())
+             ~~~~^^
+  File "C:\Users\Admin\WorkBuddy AI\2026-11-12-00-51-06\Sigil-C\sigilc_core\cli.py", line 162, in main
+    with open(in_path, "r", encoding="utf-8") as f:
+         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: 'tools'

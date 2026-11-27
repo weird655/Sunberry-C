@@ -25,6 +25,23 @@ from .preamble import C99_PRELUDE
 from .version import __alias__, __version__
 
 
+def _read_source_file(path: str):
+    """Read a source file and normalize CLI I/O failures into one message."""
+    if os.path.isdir(path):
+        return None, f"input '{path}' is a directory; use --build for project directories"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read(), None
+    except FileNotFoundError:
+        return None, f"input file not found: '{path}'"
+    except UnicodeDecodeError:
+        return None, f"input file is not valid UTF-8: '{path}'"
+    except PermissionError:
+        return None, f"permission denied reading input: '{path}'"
+    except OSError as e:
+        return None, f"cannot read input '{path}': {e}"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="sigilc.py",
@@ -137,10 +154,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         ap.error("input is required unless --build DIR is given")
 
     if args.netlist:
-        src = ""
+        src, read_err = _read_source_file(args.input)
+        if read_err:
+            print(f"error: {read_err}", file=sys.stderr)
+            return 1
         try:
-            with open(args.input, "r", encoding="utf-8") as f:
-                src = f.read()
             out = netlist_source(src, args.input, defines, args.strict,
                                  format=args.netlist_format)
             if args.output_opt:
@@ -159,8 +177,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     in_path = args.input
     out_path = args.output_opt or args.output or (os.path.splitext(in_path)[0] + ".c")
-    with open(in_path, "r", encoding="utf-8") as f:
-        src = f.read()
+    src, read_err = _read_source_file(in_path)
+    if read_err:
+        print(f"error: {read_err}", file=sys.stderr)
+        return 1
     fname = os.path.basename(in_path)
     if not args.emit_header and not args.check:
         if not src.strip():

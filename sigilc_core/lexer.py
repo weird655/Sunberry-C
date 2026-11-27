@@ -31,6 +31,12 @@ SIGIL_KEYWORDS = {
 # （例如 x! struct sockaddr_in { ... }; 这里记 sockaddr_in -> "struct sockaddr_in"）
 EXTERNAL_C_SPELLING: Dict[str, str] = {}
 
+PREPROC_DIRECTIVES = {
+    'include', 'define', 'undef', 'if', 'ifdef', 'ifndef',
+    'else', 'elif', 'endif', 'line', 'error', 'pragma',
+}
+
+
 SIGIL_OPERATORS = {
     'm,': 'OP_ASSIGN',      'm+': 'OP_ADD_ASSIGN',  'm-': 'OP_SUB_ASSIGN',
     'm*': 'OP_MUL_ASSIGN',  'm/': 'OP_DIV_ASSIGN',  '==': 'OP_EQ',
@@ -333,7 +339,18 @@ class Lexer:
                         buf.append(self._advance())
                     elif c == '\n':
                         break
-                tokens.append(Token('PREPROC', ''.join(buf).rstrip('\n'), s_line, s_col, s_byte))
+                raw = ''.join(buf).rstrip('\n')
+                body = raw[1:].lstrip()
+                name = ''
+                for ch2 in body:
+                    if ch2.isalnum() or ch2 == '_':
+                        name += ch2
+                    else:
+                        break
+                if name not in PREPROC_DIRECTIVES:
+                    raise LexerError(
+                        f"{self.filename}:{s_line}:{s_col}: Unsupported preprocessor directive '#'{name}")
+                tokens.append(Token('PREPROC', raw, s_line, s_col, s_byte))
                 continue
 
             self.at_line_start = False

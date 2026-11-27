@@ -1,0 +1,6 @@
+fuzz_673.sigil:1:2: error: invalid preprocessing directive #inclu$e; did you mean #include?
+fuzz_673.sigil: In function 'main':
+fuzz_673.sigil:24:5: error: implicit declaration of function 'printf' [-Wimplicit-function-declaration]
+fuzz_673.sigil:1:1: note: include '<stdio.h>' or provide a declaration of 'printf'
+fuzz_673.sigil:24:5: warning: incompatible implicit declaration of built-in function 'printf' [-Wbuiltin-declaration-mismatch]
+fuzz_673.sigil:24:5: note: include '<stdio.h>' or provide a declaration of 'printf'
