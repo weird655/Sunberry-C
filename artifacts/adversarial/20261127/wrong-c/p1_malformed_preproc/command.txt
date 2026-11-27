@@ -1,1 +1,0 @@
-python sigilc.py input.sigil -o out.c && gcc -std=c99 out.c

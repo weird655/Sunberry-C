@@ -41,3 +41,6 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 editors/vscode/*.vsix
+
+# adversarial test artifacts (local evidence, not source)
+artifacts/

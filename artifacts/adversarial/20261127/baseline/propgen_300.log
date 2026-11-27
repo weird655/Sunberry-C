@@ -1,9 +1,0 @@
-CMD: C:\Users\Admin\AppData\Local\Python\pythoncore-3.14-64\python.exe tools/propgen.py --count 300 --seed 20261127
-EXIT: 0
-
-STDOUT:
-propgen: 300 programs, seed 20261127, all compile
-
-
-STDERR:
-
