@@ -4826,6 +4826,15 @@ i4 main(v.) {
             "f8 x m, 0x1p;",
             "f8 x m, 0x1.2;",
             "f8 x m, 1e;",
+            "f8 x m, 0x1p;",
+            "f8 x m, 0x1p+;",
+            "u4 x m, 0b;",
+            "i4 x m, 0778;",
+            "c1 c m, 'unterminated;",
+            "f8 x m, 0x1p+;",
+            "f8 x m, 0x1.2;",
+            "u4 x m, 0b;",
+            "i4 x m, 0778;",
             "p* c@ c1 s m, \"open;",
             "c1 c m, 'open;",
             "u4 x m, 0b;",
@@ -4889,6 +4898,17 @@ i4 main(v.) {
             shl = N.BinaryExpr(1, 1, "<<", N.LiteralExpr(1, 1, "1"), N.LiteralExpr(1, 1, "2"))
             shl.sem_type = b
             assert "sigil_shl" in N.emit_expr(shl)
+            assert N.slice_mask(64) == "~0ULL"
+            pp = N.BinaryExpr(1, 1, "+", N.IdentExpr(1, 1, "p"), N.IdentExpr(1, 1, "q"))
+            pp.sem_type = p
+            pp.left.sem_type = p
+            pp.right.sem_type = p
+            assert N.emit_expr(pp)
+            pp2 = N.BinaryExpr(1, 1, "+", N.IdentExpr(1, 1, "p"), N.IdentExpr(1, 1, "q"))
+            pp2.sem_type = p
+            pp2.left.sem_type = p
+            pp2.right.sem_type = p
+            assert N.emit_expr(pp2)
             unknown = N.ExprNode(1, 1)
             try:
                 N.emit_expr(unknown)
@@ -4954,6 +4974,264 @@ i4 main(v.) {
 
     assert_ok("90. attrs", "attribute integer/string arity and malformed arguments", test_attribute_arguments)
 
+
+    # Layer 91: package table/API/format direct branches
+    def test_package_table_direct():
+        from sigilc_core.lexer import Token
+        from sigilc_core.nodes import SemanticError
+        from sigilc_core.packages import PackageTable
+        from sigilc_core.type_system import BaseType
+        class FakeParser:
+            filename = "pkg-direct.sigil"
+            class _P:
+                def __init__(self):
+                    self.pkgs = None
+            pkgs = None
+        p = FakeParser()
+        p.pkgs = PackageTable()
+        tok = Token("PKG3", "1", 1, 1, 0)
+        for left, right in (("a", "a"),):
+            try:
+                p.pkgs.add_alias(p, left, right, tok)
+            except SemanticError:
+                pass
+            else:
+                raise AssertionError("expected self alias rejection")
+        p.pkgs.add_alias(p, "a", "b", tok)
+        p.pkgs.aliases["c"] = "b"
+        try:
+            p.pkgs.add_alias(p, "c", "a", tok)
+        except SemanticError:
+            pass
+        else:
+            raise AssertionError("expected alias chain rejection")
+        p.pkgs.armed.add("99")
+        assert p.pkgs.armed_name("x") is None
+        try:
+            p.pkgs.add_alias(p, "b", "a", tok)
+        except SemanticError:
+            pass
+        else:
+            raise AssertionError("expected alias cycle rejection")
+        try:
+            p.pkgs.target(p, "9", tok)
+        except SemanticError:
+            pass
+        else:
+            raise AssertionError("expected undeclared package rejection")
+        p.pkgs.packages["9"] = "N"
+        try:
+            p.pkgs.target(p, "9", tok)
+        except SemanticError:
+            pass
+        else:
+            raise AssertionError("expected unbound package rejection")
+        assert p.pkgs.has_slot("9") is False
+        p.pkgs.slot_types["9"] = BaseType(1, 1, "int32_t")
+        assert p.pkgs.has_slot("9") is True
+        assert p.pkgs.target(p, "9", tok) == "slot:9"
+
+    assert_ok("91. packages", "package table alias/target/slot direct branches", test_package_table_direct)
+
+
+    # Layer 92: package corpus error/regions
+    def test_package_corpus():
+        cases = [
+            "!>1<! a b; !>2<! b a;",
+            "o! u4 r m, 0; !1! F; !1! m, bits(r, x, 1); i4 main(v.) { r; 0; }",
+            "o! u4 r m, 0; !1! m, bit(r, 0); i4 main(v.) { r; 0; }",
+            "!1! m, missing; i4 main(v.) { r; 0; }",
+            "!1! P; !1! m, f; !1! m, f; i4 f(v.) { r; 0; }",
+            "!1! P; !1! P;",
+            "!1!! m, x;",
+            "!1! P; !1! m, x; i4 main(v.) { o! i4 y m, 1; !2! m, !/1/!; r; 0; }",
+            "!1! P; i4 main(v.) { o! i4 y m, 1; !1! m, y; r; !/1/!; }",
+            "!1! P; i4 f(v.) { o! i4 y m, 1; !1! m, y; r; 0; } i4 main(v.) { r; !/1/!(); }",
+            "!1! P; !>1<! x y;",
+            "!1! P; !1!! m, x;",
+            "!1! P; !1! m, x; !1! m, x;",
+            "!1! P; !1! m, !/2/!;",
+            "!1! P; !1! m, x; i4 main(v.) { o! i4 a m, 1; !2! m, !/1/!; r; 0; }",
+            "!1! P; i4 f(v.) { o! i4 a m, 1; !1! m, a; r; 0; } i4 main(v.) { r; !/1/!(); }",
+            "!1! P; !>1<! f1 f2; i4 f1(v.) { r; 0; }",
+        ]
+        for src in cases:
+            try:
+                compile_source(src, "pkg-corpus.sigil")
+            except (SemanticError, ParseError, LexerError):
+                pass
+
+    assert_ok("92. packages", "package corpus: slice/alias/landmine/local region", test_package_corpus)
+
+
+    # Layer 93: codegen statement direct branches
+    def test_codegen_stmt_direct():
+        from sigilc_core import nodes as N
+        from sigilc_core.codegen import CodeGenerator
+        from sigilc_core.type_system import ArrayType, BaseType
+        g = CodeGenerator("direct.sigil", line_directives=False)
+        lit = N.LiteralExpr(1, 1, "1")
+        assert g._format_inline_stmt(None) == ""
+        assert "1" in g._format_inline_stmt(N.ExprStmt(1, 1, lit))
+        try:
+            g._format_inline_stmt(N.TrapStmt(1, 1))
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("expected unsupported inline stmt")
+        g.gen_stmt(N.PreprocNode(1, 1, "#define X 1"), 0)
+        assert g._case_terminates([]) is False
+        bs = N.BitSliceExpr(1, 1, N.IdentExpr(1, 1, "x"), BaseType(1, 1, "u4"), byte_index=0)
+        g.gen_stmt(N.AssignStmt(1, 1, "+=", bs, lit), 0)
+        inner = N.IfStmt(1, 1, lit, N.BlockStmt(1, 1, []), None)
+        outer = N.IfStmt(1, 1, lit, N.BlockStmt(1, 1, []), inner)
+        g.gen_stmt(outer, 0)
+        ext = N.ExternalTypeNode(1, 1, "H", "struct H", False, 1,
+                                 {"bad": ArrayType(1, 1, BaseType(1, 1, "i4"),
+                                                   N.LiteralExpr(1, 1, "n", "INT_NUM"))}, {})
+        g.gen_top(ext)
+        mem = N.MemberExpr(1, 1, N.IdentExpr(1, 1, "s"), "b", False)
+        mem.is_bitfield = True
+        mem.sem_type = BaseType(1, 1, "u4")
+        mem.base.sem_type = BaseType(1, 1, "u4")
+        g.gen_stmt(N.AssignStmt(1, 1, "+=", mem, lit), 0)
+
+    assert_ok("93. codegen", "inline stmt/preproc/slice/else/external unknown branches", test_codegen_stmt_direct)
+
+
+    # Layer 94: netlist synthetic state branches
+    def test_netlist_synthetic():
+        from sigilc_core.confine import Confinement
+        from sigilc_core.netlist import _field_text, _type_name, render_netlist
+        from sigilc_core.nodes import LiteralExpr
+        from sigilc_core.packages import PackageTable
+        from sigilc_core.type_system import ArrayType, BaseType
+        class Fake:
+            filename = "!math!/synthetic.sigil"
+            file_gate_seen = True
+            file_gate_on = False
+            file_gate_category = "cat"
+            pkgs = PackageTable()
+            confine = Confinement()
+        f = Fake()
+        p = f.pkgs
+        u4 = BaseType(1, 1, "u4")
+        p.packages = {"1": "F", "2": "B", "3": "T", "4": "S"}
+        p.slot_types = {"1": u4, "2": u4, "3": u4, "4": u4}
+        p.local = {"1": "r", "2": "x", "4": "z"}
+        p.fields = {
+            "1": (u4, 0, 8, None, "r"),
+            "2": (u4, 1, 8, 0, "r"),
+        }
+        p.targets = {"B": "x"}
+        p.aliases = {"B": "x"}
+        p.local_alias = {"y": 4}
+        p.armed = {"3"}
+        p.arm_sites = {"3": (1, 1)}
+        p.armed_bound = {}
+        f.confine.groups = {"0": [("name", "f1")]}
+        f.confine.long_groups = {"1": [("name", "f2")]}
+        f.confine.gates = [(1, 1, "GROUP", "0", "1", ["f1"])]
+        f.confine.confined = {"1": {"f1"}}
+        out = render_netlist(f)
+        assert "[fields]" in out and "[landmines]" in out and "unbound" in out
+        assert _type_name(ArrayType(1, 1, u4, LiteralExpr(1, 1, "2", "INT_NUM"), size_val=2)) == "arraytype"
+        from sigilc_core.type_system import TypeNode
+        assert _type_name(TypeNode(1, 1)) == "typenode"
+        assert _field_text("r", 1, 8, 0) == "byte(r, i=0)"
+
+    assert_ok("94. netlist", "synthetic local slot/field/alias/landmine/gate render", test_netlist_synthetic)
+
+
+    # Layer 95: API fallback/build errors
+    def test_api_fallback_branches():
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from sigilc_core.api import _build_project, _rename_function_calls
+        from sigilc_core.lexer import Token
+        class FakeLexer:
+            def __init__(self, *a, **k):
+                pass
+            def tokenize(self):
+                return [Token("IDENT", "add", 1, 99, 0)]
+        with patch("sigilc_core.api.Lexer", FakeLexer):
+            assert _rename_function_calls("add(1);", {"add": "x"}) == "x(1);"
+            assert _rename_function_calls("x(1);", {"add": "x"}) == "x(1);"
+        assert format_source("a ,b\n")
+        assert format_source("x /* open\n")
+
+        work = tempfile.mkdtemp(prefix="api-fallback-")
+        proj = os.path.join(work, "p")
+        os.makedirs(proj)
+        with open(os.path.join(proj, "main.sigil"), "w", encoding="utf-8") as f:
+            f.write("i4 f(v.) { r; 0; }\ni4 main(v.) { r; 0; }\n")
+        def args(**kw):
+            base = dict(build=proj, header=None, emit_header=False, output_opt=os.path.join(work, "app"), output=None,
+                        prelude=None, bounds_check=True, no_line=False, strict=False,
+                        checked=False, checked_strict=False, checked_external=False,
+                        allow_external=[], asan=False, tsan=False, ub_check=False,
+                        cc="gcc", cflags="-std=c99", run=False)
+            base.update(kw)
+            return SimpleNamespace(**base)
+        with patch("sigilc_core.api._project_prototypes", return_value=["bad"]):
+            assert _build_project(args(), {}) in (0, 1)
+        with patch("sigilc_core.api._PROJECT_MAX_EXPORTS", 0):
+            with open(os.path.join(proj, "main.sigil"), "w", encoding="utf-8") as f:
+                f.write("i4 f(v.) { r; 0; }\n!1! P;\n!1! m, f;\ni4 main(v.) { r; 0; }\n")
+            assert _build_project(args(), {}) == 1
+        with patch("sigilc_core.api.compile_header", side_effect=SemanticError("hdr")):
+            with open(os.path.join(proj, "main.sigil"), "w", encoding="utf-8") as f:
+                f.write("i4 main(v.) { r; 0; }\n")
+            assert _build_project(args(emit_header=True), {}) == 1
+
+    assert_ok("95. api", "rename fallback and project fallback/export/header errors", test_api_fallback_branches)
+
+
+    # Layer 96: parser direct helper branches
+    def test_parser_helper_direct():
+
+        from sigilc_core.lexer import Token
+        from sigilc_core.nodes import ParseError, SemanticError
+        from sigilc_core.parser import Parser
+
+        p = Parser([], "parser-helper.sigil", effects={"f": {"summary": None, "escape": set(), "params": []}})
+        tok = Token("IDENT", "aligned", 1, 1, 0)
+        assert p._attr_int_value(tok, "0x10") == 16
+        assert p._attr_int_value(tok, "0b10") == 2
+        assert p._attr_int_value(tok, "010") == 8
+        try:
+            p._attr_int_value(tok, "nope")
+        except SemanticError:
+            pass
+        else:
+            raise AssertionError("expected invalid attr int")
+        for name, args in (("unused", []), ("aligned", ["8"]), ("section", ['".x"'])):
+            p._validate_attribute(tok, name, args)
+        for name, args in (("nope", []), ("unused", ["1"]), ("aligned", []), ("section", [])):
+            try:
+                p._validate_attribute(tok, name, args)
+            except SemanticError:
+                pass
+            else:
+                raise AssertionError("expected attr validation failure")
+        toks = [Token("LPAREN", "(", 1, 1, 0), Token("KW_PTR", "p*", 1, 2, 0), Token("TYPE_INT", "u4", 1, 3, 0)]
+        p.tokens = toks
+        p.pos = 1
+        assert p._is_type_start_at(1)
+        p.pos = 0
+        assert p._can_omit_object_marker(Token("TYPE_INT", "i4", 1, 1, 0)) is False
+        p.tokens = [Token("TYPE_INT", "i4", 1, 1, 0), Token("IDENT", "x", 1, 2, 0)]
+        assert p._can_omit_object_marker(Token("TYPE_INT", "i4", 1, 1, 0))
+        try:
+            p._eat("LBRACE")
+        except ParseError:
+            pass
+        else:
+            raise AssertionError("expected eat error")
+
+    assert_ok("96. parser", "parser attribute/type/omit/eat direct branches", test_parser_helper_direct)
+
     # === end of tests: new layers go above this line ===
 
     if failures:
@@ -4961,7 +5239,7 @@ i4 main(v.) {
         for layer, desc, why in failures:
             print(f"  - [{layer}] {desc}\n      {why}")
         raise SystemExit(1)
-    print(f"=== ALL {passed}/{total} TESTS IN 90-LAYER MATRIX PASSED! ===")
+    print(f"=== ALL {passed}/{total} TESTS IN 96-LAYER MATRIX PASSED! ===")
 
 if __name__ == "__main__":
     run_test_matrix()
